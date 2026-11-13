@@ -31,8 +31,8 @@ python3 -m http.server 8000   # then open http://localhost:8000
 | `index.html`, `style.css` | Page, HUD, touch UI |
 | `src/main.js` | Renderer, lights, camera follow, game loop |
 | `src/boat.js` | Boat model and physics: thrust, drag, drift, turning, bank and pitch tilt, floating on waves |
-| `src/water.js` | Wave shader; `waveHeight()` uses the same maths on the CPU so things float on the visible surface |
-| `src/world.js` | Seeded islands, palms, buoys, collectible rings, collisions |
+| `src/water.js` | Water rendering in two passes: the scene under the water is drawn to a texture with depth, then the water shader uses that depth for refraction, colour that fades with depth, and foam along shores and hulls. Also seabed caustics and `waveHeight()`, which uses the same maths on the CPU so things float on the visible surface |
+| `src/world.js` | Seeded islands with underwater shelves, coral, seaweed, reef pillars, fish schools that scatter when the boat passes, a shipwreck on a sandbar near the start, buoys, rings, collisions |
 | `src/wake.js` | Foam trail behind the boat |
 | `src/controls.js` | Floating touch joystick, boost button, keyboard |
 | `vendor/three.module.min.js` | Three.js r169 (MIT), stored in the repo so the game works with no CDN |

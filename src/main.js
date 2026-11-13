@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Water } from './water.js';
+import { Water, SURFACE_LAYER } from './water.js';
 import { Boat } from './boat.js';
 import { World } from './world.js';
 import { Wake } from './wake.js';
@@ -7,14 +7,16 @@ import { Controls } from './controls.js';
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // updated once per frame by Water.render
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0a5a7a');
 
-const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 400);
+const camera = new THREE.PerspectiveCamera(50, 1, 1, 400);
+camera.layers.enable(SURFACE_LAYER);
 
 // Lighting.
 scene.add(new THREE.HemisphereLight('#cfeeff', '#0a4a63', 1.4));
@@ -24,10 +26,11 @@ sun.shadow.mapSize.set(1024, 1024);
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 120 });
 scene.add(sun, sun.target);
 
-const water = new Water(scene);
+const water = new Water(scene, renderer);
 const boat = new Boat(scene);
 const world = new World(scene);
 const wake = new Wake(scene);
+for (const p of wake.items) p.m.layers.set(SURFACE_LAYER);
 const controls = new Controls(
   document.getElementById('boost'),
   document.getElementById('stick-base'),
@@ -39,6 +42,7 @@ const arrow = new THREE.Mesh(
   new THREE.ConeGeometry(0.5, 1.4, 4).rotateX(Math.PI / 2),
   new THREE.MeshBasicMaterial({ color: '#ffc531', transparent: true, opacity: 0.85 })
 );
+arrow.layers.set(SURFACE_LAYER);
 scene.add(arrow);
 
 const speedEl = document.getElementById('speed');
@@ -50,6 +54,8 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  water.setSize(size.x, size.y);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -89,7 +95,7 @@ function frame() {
   const input = running ? controls.read(boat) : { throttle: 0, steer: 0, boost: false };
   boat.update(dt, input, t);
   const before = boat.speed;
-  const got = world.update(t, boat);
+  const got = world.update(t, dt, boat);
   if (before - boat.speed > 4) shake = Math.min(1.5, (before - boat.speed) * 0.08);
   if (got) { score += got; scoreEl.textContent = score; }
   wake.update(dt, t, boat);
@@ -108,7 +114,7 @@ function frame() {
 
   updateCamera(dt);
   speedEl.textContent = Math.round(boat.speed * 1.6);
-  renderer.render(scene, camera);
+  water.render(scene, camera);
   requestAnimationFrame(frame);
 }
 lookAt.set(boat.pos.x, 0, boat.pos.y);
