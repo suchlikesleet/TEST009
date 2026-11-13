@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b4f6c" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Wake Runner</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div class="pill"><span id="speed">0</span><small> kn</small></div>
+    <div class="pill">★ <span id="score">0</span></div>
+  </div>
+
+  <button id="fullscreen" class="icon-btn" aria-label="Fullscreen">⛶</button>
+
+  <div id="stick-base"><div id="stick-knob"></div></div>
+  <button id="boost" aria-label="Boost">BOOST</button>
+
+  <div id="intro">
+    <h1>Wake Runner</h1>
+    <p>Drag anywhere to steer and throttle.<br />Hold <b>BOOST</b> to go faster.<br />Collect the gold rings.</p>
+    <p class="desktop">Keyboard: WASD / arrows, Space to boost</p>
+    <button id="start">Tap to start</button>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
