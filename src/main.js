@@ -4,6 +4,7 @@ import { Boat } from './boat.js';
 import { World } from './world.js';
 import { Wake } from './wake.js';
 import { Controls } from './controls.js';
+import { Spray } from './spray.js';
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -31,6 +32,7 @@ const boat = new Boat(scene);
 const world = new World(scene);
 const wake = new Wake(scene);
 for (const p of wake.items) p.m.layers.set(SURFACE_LAYER);
+const spray = new Spray(scene);
 const controls = new Controls(
   document.getElementById('boost'),
   document.getElementById('stick-base'),
@@ -56,6 +58,7 @@ function resize() {
   camera.updateProjectionMatrix();
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   water.setSize(size.x, size.y);
+  spray.setViewport(size.y, camera);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -94,11 +97,21 @@ function frame() {
 
   const input = running ? controls.read(boat) : { throttle: 0, steer: 0, boost: false };
   boat.update(dt, input, t);
-  const before = boat.speed;
   const got = world.update(t, dt, boat);
-  if (before - boat.speed > 4) shake = Math.min(1.5, (before - boat.speed) * 0.08);
+  for (const e of boat.events) {
+    if (e.type === 'land') {
+      const p = boat.root.position;
+      spray.burst(p.x, p.y, p.z, e.strength, boat.vel.x, boat.vel.y);
+      shake = Math.max(shake, Math.min(0.8, e.strength * 0.1));
+    } else if (e.type === 'hit') {
+      spray.burst(e.x, boat.root.position.y, e.z, e.strength * 0.8);
+      shake = Math.max(shake, Math.min(1.5, e.strength * 0.08));
+    }
+  }
+  boat.events.length = 0;
   if (got) { score += got; scoreEl.textContent = score; }
   wake.update(dt, t, boat);
+  spray.update(dt, t, boat);
   water.update(t, boat.root.position, camera);
 
   const near = world.nearestRing(boat.pos.x, boat.pos.y);

@@ -33,7 +33,7 @@ export class Wake {
     const speed = boat.speed;
     this.timer += dt;
     const interval = speed > 1 ? THREE.MathUtils.clamp(0.9 / speed, 0.025, 0.12) : Infinity;
-    if (this.timer > interval) {
+    if (this.timer > interval && !boat.airborne) {
       this.timer = 0;
       const f = boat.forward, r = boat.right;
       const sx = boat.pos.x - f.x * 2.4, sz = boat.pos.y - f.y * 2.4;

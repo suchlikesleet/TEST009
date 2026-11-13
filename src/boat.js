@@ -8,6 +8,10 @@ const REVERSE_ACCEL = 7;
 const FORWARD_DRAG = 0.55;
 const LATERAL_GRIP = 2.4; // lower = more drift
 const TURN_RATE = 2.3; // rad / s at speed
+const GRAVITY = 14; // a bit stronger than real for snappy hops
+const BUOY_K = 70; // how stiffly the hull floats back to the surface
+const BUOY_DAMP = 9;
+const LAUNCH = 2.6; // how hard rising water throws the hull at speed
 
 function buildModel() {
   const model = new THREE.Group();
@@ -70,6 +74,15 @@ export class Boat {
     this.pitch = 0;
     this.prevForward = 0;
     this.radius = 1.6;
+    // Vertical motion (bouncing).
+    this.y = 0;
+    this.vy = 0;
+    this.prevRest = null;
+    this.airborne = false;
+    this.airTime = 0;
+    this.steer = 0;
+    this.boosting = false;
+    this.events = []; // 'land' / 'hit' events for spray + camera shake, drained by main.js
   }
 
   get forward() { return new THREE.Vector2(Math.sin(this.heading), Math.cos(this.heading)); }
@@ -84,24 +97,29 @@ export class Boat {
 
     const maxSpeed = MAX_SPEED * (input.boost ? BOOST_MULT : 1);
 
+    // In the air the propeller and rudder bite nothing.
+    const grip = this.airborne ? 0.3 : 1;
+
     // Throttle.
     if (input.throttle > 0) {
-      vf += input.throttle * ACCEL * (input.boost ? 1.5 : 1) * dt;
+      vf += input.throttle * ACCEL * (input.boost ? 1.5 : 1) * grip * dt;
     } else if (input.throttle < 0) {
-      vf += input.throttle * REVERSE_ACCEL * dt;
+      vf += input.throttle * REVERSE_ACCEL * grip * dt;
     }
     // Drag, with an extra soft cap above max speed.
-    vf -= vf * FORWARD_DRAG * dt;
+    vf -= vf * FORWARD_DRAG * (this.airborne ? 0.3 : 1) * dt;
     if (vf > maxSpeed) vf += (maxSpeed - vf) * 3 * dt;
     if (vf < -maxSpeed * 0.3) vf = -maxSpeed * 0.3;
 
     // Lateral grip: water resists sideways sliding, but not perfectly -> drift.
-    vl *= Math.exp(-LATERAL_GRIP * dt);
+    vl *= Math.exp(-LATERAL_GRIP * grip * dt);
 
     // Steering needs water flowing past the rudder.
     const steerAuthority = Math.min(Math.abs(vf) / 6, 1) * Math.sign(vf || 1);
-    const turn = input.steer * TURN_RATE * steerAuthority * (input.boost ? 0.85 : 1);
+    const turn = input.steer * TURN_RATE * steerAuthority * (input.boost ? 0.85 : 1) * (this.airborne ? 0.6 : 1);
     this.heading -= turn * dt;
+    this.steer = input.steer;
+    this.boosting = input.boost && input.throttle > 0;
 
     // Rebuild velocity in the new frame.
     const nf = this.forward;
@@ -109,33 +127,75 @@ export class Boat {
     this.vel.set(nf.x * vf + nr.x * vl, nf.y * vf + nr.y * vl);
     this.pos.addScaledVector(this.vel, dt);
 
-    // --- Visual tilt ---
     const speedFactor = Math.min(Math.abs(vf) / MAX_SPEED, 1.4);
     const accelForward = (vf - this.prevForward) / Math.max(dt, 1e-4);
     this.prevForward = vf;
 
-    // Bank into the turn, plus a little lean from sideways sliding.
-    const targetRoll = input.steer * speedFactor * 0.32 - (vl / MAX_SPEED) * 0.5;
-    // Bow lifts with speed and when accelerating hard.
-    const targetPitch = -(speedFactor * 0.1 + THREE.MathUtils.clamp(accelForward / 60, -0.08, 0.12));
-
-    // Wave slope under the boat.
+    // --- Water surface under the hull ---
     const bx = this.pos.x, bz = this.pos.y;
     const L = 2.2, W = 1.0;
     const hBow = waveHeight(bx + nf.x * L, bz + nf.y * L, t);
     const hStern = waveHeight(bx - nf.x * L, bz - nf.y * L, t);
     const hRight = waveHeight(bx + nr.x * W, bz + nr.y * W, t);
     const hLeft = waveHeight(bx - nr.x * W, bz - nr.y * W, t);
-    const wavePitch = -Math.atan2(hBow - hStern, 2 * L) * 0.8;
-    const waveRoll = Math.atan2(hLeft - hRight, 2 * W) * 0.8;
-
-    const k = 1 - Math.exp(-6 * dt);
-    this.roll += (targetRoll + waveRoll - this.roll) * k;
-    this.pitch += (targetPitch + wavePitch - this.pitch) * k;
-
     const h = (hBow + hStern + hLeft + hRight) / 4;
     // Planing: the hull rides higher at speed.
-    this.root.position.set(bx, h - 0.25 + speedFactor * 0.15, bz);
+    const rest = h - 0.25 + speedFactor * 0.15;
+    if (this.prevRest === null) { this.prevRest = rest; this.y = rest; }
+    const surfaceVel = (rest - this.prevRest) / Math.max(dt, 1e-4);
+    this.prevRest = rest;
+
+    // --- Vertical physics: float on a spring, get thrown by rising water, fall with gravity ---
+    const wasAirborne = this.airborne;
+    if (this.y > rest + 0.03) {
+      this.airborne = true;
+      this.vy -= GRAVITY * dt;
+      this.airTime += dt;
+    } else {
+      // Buoyancy spring + damping.
+      this.vy += (BUOY_K * (rest - this.y) - BUOY_DAMP * this.vy) * dt;
+      // Hitting rising water fast kicks the hull up — the faster you go, the bigger the hop.
+      if (surfaceVel > 0) {
+        const launch = 1 + LAUNCH * speedFactor * speedFactor;
+        this.vy = Math.max(this.vy, surfaceVel * launch);
+      }
+      if (wasAirborne) {
+        const impact = -this.vy;
+        if (this.airTime > 0.12 && impact > 1.5) {
+          this.events.push({ type: 'land', strength: impact });
+          this.pitch += Math.min(impact * 0.035, 0.25); // nose slaps down
+          this.roll += (Math.random() - 0.5) * impact * 0.04;
+          this.vy *= 0.35; // water soaks up the hit
+          vf *= 1 - Math.min(impact * 0.012, 0.12);
+          this.vel.set(nf.x * vf + nr.x * vl, nf.y * vf + nr.y * vl);
+        }
+        this.airborne = false;
+        this.airTime = 0;
+      }
+    }
+    this.y += this.vy * dt;
+    if (this.y < rest - 0.8) { this.y = rest - 0.8; this.vy = Math.max(this.vy, 0); }
+
+    // --- Visual tilt ---
+    // Bank into the turn, plus a little lean from sideways sliding.
+    let targetRoll = input.steer * speedFactor * 0.32 - (vl / MAX_SPEED) * 0.5;
+    // Bow lifts with speed and when accelerating hard.
+    let targetPitch = -(speedFactor * 0.1 + THREE.MathUtils.clamp(accelForward / 60, -0.08, 0.12));
+
+    if (this.airborne) {
+      // Nose follows the flight path: up while rising, dipping as it falls.
+      targetPitch += THREE.MathUtils.clamp(-this.vy * 0.06, -0.35, 0.3);
+      targetRoll *= 0.5;
+    } else {
+      targetPitch += -Math.atan2(hBow - hStern, 2 * L) * 0.8;
+      targetRoll += Math.atan2(hLeft - hRight, 2 * W) * 0.8;
+    }
+
+    const k = 1 - Math.exp(-(this.airborne ? 3 : 6) * dt);
+    this.roll += (targetRoll - this.roll) * k;
+    this.pitch += (targetPitch - this.pitch) * k;
+
+    this.root.position.set(bx, this.y, bz);
     this.root.rotation.y = this.heading;
     this.tilt.rotation.set(this.pitch, 0, this.roll, 'YXZ');
   }
@@ -154,6 +214,7 @@ export class Boat {
       this.vel.x -= 1.4 * vn * nx;
       this.vel.y -= 1.4 * vn * nz;
       this.vel.multiplyScalar(0.6);
+      if (-vn > 3) this.events.push({ type: 'hit', strength: -vn, x: cx + nx * radius, z: cz + nz * radius });
       return -vn;
     }
     return 0;
