@@ -12,8 +12,8 @@ const WAVES = [
 // Rolling swells: occasional tall ridges with whitecaps that sweep across the sea.
 // They are the only waves that can launch the boat, so you can see a jump coming.
 export const ROLLER = {
-  dir: [0.8, -0.6], // travel direction
-  perp: [0.6, 0.8],
+  dir: [0.0, 1.0], // travel direction: toward the camera, so crests run left-right on screen
+  perp: [1.0, 0.0],
   k: (Math.PI * 2) / 38, // ~38 units between ridges
   speed: 1.5, // phase speed (rad/s) -> ridges move ~13 units/s
   amp: 1.15,
@@ -187,26 +187,36 @@ const fragmentShader = /* glsl */ `
     return fract((p3.x + p3.y) * p3.z);
   }
 
-  vec2 hash2(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.xx + p3.yz) * p3.zy);
+  // Stylized wave stroke (like a hand-drawn ﹏ line): rounded troughs joined at sharp,
+  // pointed crests. Laid out in rows across the wind, broken into short segments that
+  // drift downwind. Returns the stroke mask; 'body' is a soft fill just under the stroke.
+  float waveStroke(vec2 wp, vec2 wind, float t, float scale, float seed, out float body) {
+    vec2 p = vec2(dot(wp, vec2(-wind.y, wind.x)), dot(wp, wind)) / scale; // x across wind, y downwind
+    p.y -= t * 0.18;                                  // drift downwind
+    p.x += sin(p.y * 0.9 + seed) * 0.5;               // gentle bend along each row
+    float row = floor(p.y);
+    p.x += hash(vec2(row, seed)) * 9.0;               // rows don't line up
+    float fy = fract(p.y) - 0.5;                      // position inside the row
+
+    const float SEG = 3.5;                            // a segment holds ~3 arcs
+    float seg = floor(p.x / SEG);
+    float keep = step(0.5, hash(vec2(seg + seed * 7.0, row)));
+    float sx = fract(p.x / SEG);
+    float taper = smoothstep(0.0, 0.18, sx) * smoothstep(1.0, 0.82, sx); // thin ends
+
+    // One arc per unit: steeper rise into the crest, gentler fall away (like the drawing).
+    float u = fract(p.x);
+    float us = pow(u, 1.35);
+    const float A = 0.38;
+    float f = A * 4.0 * (us - 0.5) * (us - 0.5) - A * 0.5;            // +A/2 at the cusps
+    float df = A * 8.0 * (us - 0.5) * 1.35 * pow(max(u, 1e-3), 0.35);
+    float d = abs(fy - f) / sqrt(1.0 + df * df);       // ~distance to the curve
+    float w = 0.055 * taper;
+    float aa = max(fwidth(d), 1e-4);
+    body = keep * taper * step(fy, f) * (1.0 - smoothstep(0.0, 0.32, f - fy));
+    return keep * (1.0 - smoothstep(w - aa, w + aa, d));
   }
-  // Animated Worley (cellular) noise: returns (distance to nearest point, to second nearest).
-  vec2 worley(vec2 p, float t) {
-    vec2 ip = floor(p), fp = fract(p);
-    float f1 = 8.0, f2 = 8.0;
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        vec2 g = vec2(float(x), float(y));
-        vec2 h = hash2(ip + g);
-        vec2 o = 0.5 + 0.38 * sin(t * 0.9 + 6.2831 * h);
-        float d = length(g + o - fp);
-        if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
-      }
-    }
-    return vec2(f1, f2);
-  }
+
   float noise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
@@ -255,21 +265,20 @@ const fragmentShader = /* glsl */ `
     float chopZone = smoothstep(0.66, 0.82, noise(wp * 0.045 + vec2(uTime * 0.03, -uTime * 0.02)));
     float rough = max(swellZone, chopZone) * smoothstep(1.5, 4.0, thick); // never in the shallows
 
-    // Choppy wave texture (only shown where rough): Worley cells squashed along the wind.
+    // Wave strokes (only where rough): a big set plus a smaller, fainter set.
     vec2 wind = vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)});
-    vec2 q = vec2(dot(wp, wind), dot(wp, vec2(-wind.y, wind.x)));
-    q += (vec2(noise(wp * 0.15 + 3.0), noise(wp * 0.15 - 5.0)) - 0.5) * 9.0;
-    vec2 c1 = worley(q * vec2(0.2, 0.1) - vec2(uTime * 0.15, 0.0), uTime * 0.8);
-    float e1 = c1.y - c1.x; // 0 on a little crest line
-    float face = 1.0 - smoothstep(0.0, 0.5, e1);
-    col = mix(col, col * mix(0.78, 1.18, face), rough);
+    float bodyA, bodyB;
+    float strokeA = waveStroke(wp, wind, uTime, 5.5, 1.0, bodyA);
+    float strokeB = waveStroke(wp + 31.0, normalize(wind + vec2(0.18, 0.0)), uTime * 1.2, 3.0, 4.0, bodyB);
+    float face = max(bodyA, bodyB * 0.6);
+    col = mix(col, col * (1.0 + 0.28 * face), rough);  // lighter wave body under each stroke
 
     // Swells: only a faint hint of their slope; their look comes from the rough-water texture.
     col *= 1.0 + 0.12 * vRollerSlope;
 
     // Golden sun glare in the top-right of the screen, only on rough water.
     float glareZone = 1.0 - smoothstep(0.0, 0.75, length((uv - vec2(1.05, 1.05)) * vec2(uResolution.x / uResolution.y, 1.0)));
-    float glint = aastep(0.68, lace2 * face * 1.4) * rough;
+    float glint = aastep(0.6, lace2 * face * 1.4) * rough;
     col += vec3(1.0, 0.8, 0.45) * glint * glareZone * 1.2;
 
     // ---------- Foam ----------
@@ -277,7 +286,7 @@ const fragmentShader = /* glsl */ `
     float shoreSolid = 1.0 - aastep(0.3 + (lace - 0.5) * 0.3, thick);
     float shoreLace = (1.0 - aastep(1.1 + (n1 - 0.5) * 0.6, thick)) * aastep(0.55, lace) * aastep(0.4, lace2);
     // Breaking little crests, only in rough water (a bit more of them along a swell).
-    float chopFoam = (1.0 - aastep(0.04 + 0.04 * n2, e1)) * aastep(mix(0.45, 0.32, swellZone), lace) * aastep(0.35, rough);
+    float chopFoam = max(strokeA, strokeB * 0.75) * aastep(0.35, rough);
     float foam = max(max(shoreSolid, shoreLace), chopFoam);
     col = mix(col, vec3(0.95, 0.98, 1.0), clamp(foam, 0.0, 1.0));
 
