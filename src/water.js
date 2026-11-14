@@ -191,12 +191,13 @@ const fragmentShader = /* glsl */ `
   // pointed crests. Laid out in rows across the wind, broken into short segments that
   // drift downwind. Returns the stroke mask; 'body' is a soft fill just under the stroke.
   float waveStroke(vec2 wp, vec2 wind, float t, float scale, float seed, out float body) {
-    vec2 p = vec2(dot(wp, vec2(-wind.y, wind.x)), dot(wp, wind)) / scale; // x across wind, y downwind
+    // x runs left-to-right on screen, y runs up the screen (against the wind, which blows toward the camera).
+    vec2 p = vec2(dot(wp, vec2(wind.y, -wind.x)), dot(wp, wind)) / scale;
     p.y -= t * 0.18;                                  // drift downwind
     p.x += sin(p.y * 0.9 + seed) * 0.5;               // gentle bend along each row
     float row = floor(p.y);
     p.x += hash(vec2(row, seed)) * 9.0;               // rows don't line up
-    float fy = fract(p.y) - 0.5;                      // position inside the row
+    float fy = 0.5 - fract(p.y);                      // position inside the row, + = up the screen
 
     const float SEG = 3.5;                            // a segment holds ~3 arcs
     float seg = floor(p.x / SEG);
