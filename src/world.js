@@ -18,6 +18,13 @@ const SHELF_TOP_Y = -0.8; // where the beach meets the underwater slope
 
 const std = (color, extra = {}) => toon(color, extra);
 
+// Flat facets (one normal per triangle) for a chiselled, low-poly rock look.
+function faceted(geo) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  g.computeVertexNormals();
+  return g;
+}
+
 export class World {
   constructor(scene) {
     this.scene = scene;
@@ -33,7 +40,7 @@ export class World {
       wetSand: withCaustics(std('#d4b983')),
       seabed: withCaustics(std('#d4b983'), 0.7),
       grass: std('#62d05a'),
-      rock: withCaustics(std('#a3acb5')),
+      rock: withCaustics(std('#a08670')),
       reef: withCaustics(std('#6f7a73')),
       trunk: std('#8b5a2b'),
       leaf: std('#36b04f'),
@@ -150,7 +157,7 @@ export class World {
 
       const rocky = this.rand() < 0.3;
       const hill = new THREE.Mesh(
-        new THREE.ConeGeometry(r * 0.75, r * (rocky ? 0.9 : 0.5), 7),
+        faceted(new THREE.ConeGeometry(r * 0.75, r * (rocky ? 0.9 : 0.5), 7, rocky ? 2 : 1)),
         rocky ? this.mats.rock : this.mats.grass
       );
       hill.position.y = 0.8 + r * (rocky ? 0.45 : 0.25);
@@ -239,7 +246,7 @@ export class World {
   }
 
   #boulder(x, y, z, s) {
-    const m = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), this.mats.rock);
+    const m = new THREE.Mesh(faceted(new THREE.DodecahedronGeometry(s, 0)), this.mats.rock);
     m.position.set(x, y + s * 0.4, z);
     m.rotation.set(this.rand() * 3, this.rand() * 3, 0);
     return m;

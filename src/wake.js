@@ -2,7 +2,44 @@ import * as THREE from 'three';
 import { waveHeight } from './water.js';
 
 const COUNT = 140;
-const LIFE = 1.6;
+
+// Foam patch that breaks up into lace as it ages (world-space noise, so neighbouring
+// patches join into one continuous lacy trail).
+const lacyFoam = new THREE.ShaderMaterial({
+  uniforms: { uAge: { value: 1 }, uSeed: { value: 0 } },
+  transparent: true,
+  depthWrite: false,
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    varying vec2 vWorld;
+    void main() {
+      vUv = uv;
+      vec4 w = modelMatrix * vec4(position, 1.0);
+      vWorld = w.xz;
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform float uAge;
+    uniform float uSeed;
+    varying vec2 vUv;
+    varying vec2 vWorld;
+    float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+    }
+    void main() {
+      float r = length(vUv - 0.5) * 2.0;
+      float n = noise(vWorld * 1.7 + uSeed * 0.0) * 0.65 + noise(vWorld * 4.3) * 0.35;
+      float v = n * (1.25 - r * r) - (0.2 + uAge * 0.6);
+      float w = max(fwidth(v), 1e-4);
+      float a = smoothstep(-w, w, v);
+      if (a < 0.01) discard;
+      gl_FragColor = vec4(vec3(0.95, 0.98, 1.0), a * 0.95);
+      #include <colorspace_fragment>
+    }`,
+});
+const LIFE = 2.2;
 
 // Foam puffs dropped behind the stern that spread and fade.
 export class Wake {
@@ -11,7 +48,8 @@ export class Wake {
     this.geo.rotateX(-Math.PI / 2);
     this.items = [];
     for (let i = 0; i < COUNT; i++) {
-      const mat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false });
+      const mat = lacyFoam.clone();
+      mat.uniforms = { uAge: { value: 1 }, uSeed: { value: Math.random() * 100 } };
       const m = new THREE.Mesh(this.geo, mat);
       m.visible = false;
       m.renderOrder = 1;
@@ -38,7 +76,7 @@ export class Wake {
       const f = boat.forward, r = boat.right;
       const sx = boat.pos.x - f.x * 2.4, sz = boat.pos.y - f.y * 2.4;
       const spread = speed * 0.12;
-      const s = 0.22 + speed * 0.012;
+      const s = 0.45 + speed * 0.028;
       // Two puffs pushed outward to form the V-shaped wake, one in the middle.
       this.#spawn(sx + r.x * 0.6, sz + r.y * 0.6, r.x * spread, r.y * spread, s);
       this.#spawn(sx - r.x * 0.6, sz - r.y * 0.6, -r.x * spread, -r.y * spread, s);
@@ -55,9 +93,9 @@ export class Wake {
       const sc = p.size * (1 + k * 2.2);
       p.m.scale.setScalar(sc);
       p.m.position.set(p.x, waveHeight(p.x, p.z, t) + 0.08, p.z);
-      // Cartoon foam: solid blobs that hold, then shrink away instead of fading.
-      p.m.material.opacity = 0.85;
-      p.m.scale.setScalar(sc * (k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4));
+      // Lacy foam: starts nearly solid, then dissolves into lace as it spreads.
+      p.m.material.uniforms.uAge.value = k;
+      p.m.scale.setScalar(sc);
     }
   }
 }

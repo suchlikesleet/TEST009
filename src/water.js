@@ -25,8 +25,9 @@ const smooth = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0),
 /** 0..1 strength of the rolling swell at a point (1 = on a crest). */
 export function rollerAt(x, z, t) {
   const R = ROLLER;
-  const along = x * R.dir[0] + z * R.dir[1];
   const across = x * R.perp[0] + z * R.perp[1];
+  // Bend the ridges so they curve like real swells instead of ruler-straight lines.
+  const along = x * R.dir[0] + z * R.dir[1] + Math.sin(across * 0.07) * 3.5 + Math.sin(across * 0.023 + 1.7) * 6.0;
   const ridge = Math.pow(0.5 + 0.5 * Math.sin(along * R.k - t * R.speed), R.sharp);
   // Break each ridge into segments so they read as separate swells, not endless lines.
   const seg = 0.5 + 0.5 * Math.sin(across * 0.06 + Math.sin(along * 0.013) * 3.0);
@@ -114,8 +115,8 @@ const vertexShader = /* glsl */ `
   varying float vHeight;
 
   float rollerAt(vec2 p, float t) {
-    float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)}));
     float across = dot(p, vec2(${ROLLER.perp[0].toFixed(3)}, ${ROLLER.perp[1].toFixed(3)}));
+    float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)})) + sin(across * 0.07) * 3.5 + sin(across * 0.023 + 1.7) * 6.0;
     float ridge = pow(0.5 + 0.5 * sin(along * ${ROLLER.k.toFixed(5)} - t * ${ROLLER.speed.toFixed(3)}), ${ROLLER.sharp.toFixed(1)});
     float seg = 0.5 + 0.5 * sin(across * 0.06 + sin(along * 0.013) * 3.0);
     return ridge * smoothstep(0.12, 0.4, seg);
@@ -150,7 +151,6 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uShallow;
   uniform vec3 uBand0;
   uniform vec3 uBand1;
-  uniform vec3 uBand2;
   uniform vec3 uSky;
   uniform vec3 uSunDir;
   uniform vec3 uCamPos;
@@ -165,8 +165,8 @@ const fragmentShader = /* glsl */ `
   varying float vHeight;
 
   float rollerAt(vec2 p, float t) {
-    float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)}));
     float across = dot(p, vec2(${ROLLER.perp[0].toFixed(3)}, ${ROLLER.perp[1].toFixed(3)}));
+    float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)})) + sin(across * 0.07) * 3.5 + sin(across * 0.023 + 1.7) * 6.0;
     float ridge = pow(0.5 + 0.5 * sin(along * ${ROLLER.k.toFixed(5)} - t * ${ROLLER.speed.toFixed(3)}), ${ROLLER.sharp.toFixed(1)});
     float seg = 0.5 + 0.5 * sin(across * 0.06 + sin(along * 0.013) * 3.0);
     return ridge * smoothstep(0.12, 0.4, seg);
@@ -185,6 +185,27 @@ const fragmentShader = /* glsl */ `
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.x + p3.y) * p3.z);
+  }
+
+  vec2 hash2(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xx + p3.yz) * p3.zy);
+  }
+  // Animated Worley (cellular) noise: returns (distance to nearest point, to second nearest).
+  vec2 worley(vec2 p, float t) {
+    vec2 ip = floor(p), fp = fract(p);
+    float f1 = 8.0, f2 = 8.0;
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        vec2 g = vec2(float(x), float(y));
+        vec2 h = hash2(ip + g);
+        vec2 o = 0.5 + 0.38 * sin(t * 0.9 + 6.2831 * h);
+        float d = length(g + o - fp);
+        if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+      }
+    }
+    return vec2(f1, f2);
   }
   float noise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
@@ -212,45 +233,53 @@ const fragmentShader = /* glsl */ `
     float thick = max(wZ - sZ, 0.0);
     vec3 below = texture2D(uSceneColor, ruv).rgb;
 
-    // ---------- Stylized look: flat colour bands, stepped shading, crisp foam ----------
-    // Depth bands with clean (anti-aliased) edges instead of smooth gradients.
-    float b1 = aastep(1.3, thick);
-    float b2 = aastep(3.2, thick);
-    float b3 = aastep(5.6, thick);
-    vec3 tint = mix(mix(mix(uBand0, uBand1, b1), uBand2, b2), uDeep, b3);
-    // Shallow bands let the seabed and objects show through, tinted; deep water hides them.
-    float see = mix(mix(mix(0.6, 0.38, b1), 0.16, b2), 0.0, b3);
-    vec3 col = mix(tint, below * tint * 1.9, see);
+    // ---------- Clear water, with texture only where the sea is rough ----------
+    vec2 wp = vWorld.xz;
+    float n1 = noise(wp * 0.8 + vec2(uTime * 0.35, uTime * 0.22));
+    float n2 = noise(wp * 1.1 - vec2(uTime * 0.4, -uTime * 0.25));
+    float lace = noise(wp * 2.4 + vec2(uTime * 0.6, -uTime * 0.4));
+    float lace2 = noise(wp * 5.0 - vec2(uTime * 0.5, uTime * 0.7));
 
-    // Two-step wave shading so the ordinary swell reads as soft bands.
-    vec3 ln = normalize(vec3(n.x * 4.0, n.y, n.z * 4.0));
-    float lit = dot(ln, uSunDir) - uSunDir.y;
-    col *= mix(0.9, 1.0, aastep(-0.12, lit)) * mix(1.0, 1.08, aastep(0.16, lit));
-    // Rolling swells: a solid shadow band on the leading face, a light band behind.
-    col *= mix(0.68, 1.0, aastep(-0.3, vRollerSlope)) * mix(1.0, 1.14, aastep(0.3, vRollerSlope));
+    // Clear, see-through water: colour comes from depth, the seabed shows in the shallows.
+    vec3 transmit = exp(-vec3(0.5, 0.18, 0.12) * thick);
+    float scatter = 1.0 - exp(-thick * 0.38);
+    vec3 tint = mix(mix(uBand0, uBand1, smoothstep(0.5, 2.5, thick)), uDeep, smoothstep(2.5, 7.0, thick));
+    vec3 col = below * transmit + tint * scatter;
+    // Very gentle broad shading from the normal swell, so calm water isn't dead flat.
+    vec3 ln = normalize(vec3(n.x * 3.0, n.y, n.z * 3.0));
+    col *= clamp(1.0 + 0.45 * (dot(ln, uSunDir) - uSunDir.y), 0.85, 1.12);
 
-    vec2 fp = vWorld.xz;
-    float n1 = noise(fp * 0.8 + vec2(uTime * 0.35, uTime * 0.22));
-    float n2 = noise(fp * 1.1 - vec2(uTime * 0.4, -uTime * 0.25));
-    float n3 = noise(fp * 2.2 + vec2(-uTime * 0.3, uTime * 0.45));
+    // Where is the sea "unsettled"? Along each rolling swell (and the churned water just
+    // behind it), plus a few slow-drifting patches of chop. Everywhere else stays calm.
+    float swellZone = smoothstep(0.03, 0.4, vRoller);
+    float chopZone = smoothstep(0.66, 0.82, noise(wp * 0.045 + vec2(uTime * 0.03, -uTime * 0.02)));
+    float rough = max(swellZone, chopZone) * smoothstep(1.5, 4.0, thick); // never in the shallows
 
-    // Sparkles: little white glints that twinkle on sunlit wave faces.
-    float sparkle = aastep(0.97, n3 * (0.6 + 0.5 * n1)) * aastep(0.06, lit);
-    col = mix(col, vec3(1.0), sparkle * 0.85);
+    // Choppy wave texture (only shown where rough): Worley cells squashed along the wind.
+    vec2 wind = vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)});
+    vec2 q = vec2(dot(wp, wind), dot(wp, vec2(-wind.y, wind.x)));
+    q += (vec2(noise(wp * 0.15 + 3.0), noise(wp * 0.15 - 5.0)) - 0.5) * 9.0;
+    vec2 c1 = worley(q * vec2(0.2, 0.1) - vec2(uTime * 0.15, 0.0), uTime * 0.8);
+    float e1 = c1.y - c1.x; // 0 on a little crest line
+    float face = 1.0 - smoothstep(0.0, 0.5, e1);
+    col = mix(col, col * mix(0.78, 1.18, face), rough);
 
-    // Foam (all hard-edged):
-    // 1. solid foam where water is thin — shores, buoys, the hull
-    float edge = 1.0 - aastep(0.5 + (n1 - 0.5) * 0.4, thick);
-    // 2. a second foam ring a little further out that breathes in and out
-    float ringPos = 1.1 + 0.25 * sin(uTime * 1.4 + n1 * 2.5);
-    float ring = (1.0 - aastep(0.1 + (n2 - 0.5) * 0.06, abs(thick - ringPos))) * (1.0 - b2);
-    // 3. a crisp whitecap line along every rolling swell, with foam bits trailing behind
-    float cap = aastep(0.84 + (n1 - 0.5) * 0.1, vRoller);
-    float trail = aastep(0.74, n3) * aastep(0.12, vRoller) * aastep(0.25, vRollerSlope);
-    // 4. a few small caps on ordinary wave crests
-    float crest = aastep(0.88, n2) * aastep(0.5, vHeight - vRoller * ${ROLLER.amp.toFixed(3)});
-    float foam = max(max(edge, ring), max(max(cap, trail * 0.9), crest * 0.8));
-    col = mix(col, vec3(0.97, 0.99, 1.0), foam);
+    // Swells: only a faint hint of their slope; their look comes from the rough-water texture.
+    col *= 1.0 + 0.12 * vRollerSlope;
+
+    // Golden sun glare in the top-right of the screen, only on rough water.
+    float glareZone = 1.0 - smoothstep(0.0, 0.75, length((uv - vec2(1.05, 1.05)) * vec2(uResolution.x / uResolution.y, 1.0)));
+    float glint = aastep(0.68, lace2 * face * 1.4) * rough;
+    col += vec3(1.0, 0.8, 0.45) * glint * glareZone * 1.2;
+
+    // ---------- Foam ----------
+    // Shores, rocks, buoys and the hull: solid at the edge, a little lace just outside.
+    float shoreSolid = 1.0 - aastep(0.3 + (lace - 0.5) * 0.3, thick);
+    float shoreLace = (1.0 - aastep(1.1 + (n1 - 0.5) * 0.6, thick)) * aastep(0.55, lace) * aastep(0.4, lace2);
+    // Breaking little crests, only in rough water (a bit more of them along a swell).
+    float chopFoam = (1.0 - aastep(0.04 + 0.04 * n2, e1)) * aastep(mix(0.45, 0.32, swellZone), lace) * aastep(0.35, rough);
+    float foam = max(max(shoreSolid, shoreLace), chopFoam);
+    col = mix(col, vec3(0.95, 0.98, 1.0), clamp(foam, 0.0, 1.0));
 
     gl_FragColor = vec4(col, 1.0);
     #include <colorspace_fragment>
@@ -267,7 +296,6 @@ export class Water {
       uTime: waterTime,
       uBand0: { value: new THREE.Color('#8af2e2') }, // very shallow
       uBand1: { value: new THREE.Color('#33cfd0') }, // shallow
-      uBand2: { value: new THREE.Color('#1f9bc9') }, // mid
       uDeep: { value: new THREE.Color('#1a6db3') }, // deep
       uShallow: { value: new THREE.Color('#2bbbc9') },
       uSky: { value: new THREE.Color('#bfe6f5') },

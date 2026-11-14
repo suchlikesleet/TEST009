@@ -24,6 +24,8 @@ scene.add(new THREE.HemisphereLight('#cfeeff', '#0a4a63', 1.4));
 const sun = new THREE.DirectionalLight('#fff4e0', 2.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.06; // stops striped 'shadow acne' on flat rock faces
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 120 });
 scene.add(sun, sun.target);
 
@@ -70,16 +72,17 @@ let shake = 0;
 function updateCamera(dt) {
   const portrait = camera.aspect < 1;
   const speedK = Math.min(boat.speed / 30, 1);
-  const height = (portrait ? 42 : 30) + speedK * 12;
+  const height = (portrait ? 34 : 24) + speedK * 9;
   // Look ahead in the direction of travel, but never so far the boat leaves the screen.
-  const halfH = height * 1.1 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const halfH = height * 1.25 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const halfW = halfH * camera.aspect;
   const tx = boat.pos.x + THREE.MathUtils.clamp(boat.vel.x * 0.7, -halfW * 0.5, halfW * 0.5);
   const tz = boat.pos.y + THREE.MathUtils.clamp(boat.vel.y * 0.7, -halfH * 0.5, halfH * 0.5);
   const k = 1 - Math.exp(-3 * dt);
   lookAt.x += (tx - lookAt.x) * k;
   lookAt.z += (tz - lookAt.z) * k;
-  camPos.set(lookAt.x, height, lookAt.z + height * 0.45);
+  // Angled view (~53° down) so wave faces and the sides of things show.
+  camPos.set(lookAt.x, height, lookAt.z + height * 0.75);
   camera.position.lerp(camPos, k);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
