@@ -30,7 +30,7 @@ python3 -m http.server 8000   # then open http://localhost:8000
 |---|---|
 | `index.html`, `style.css` | Page, HUD, touch UI |
 | `src/main.js` | Renderer, lights, camera follow, game loop |
-| `src/boat.js` | Boat model and physics: thrust, drag, drift, turning, bank and pitch tilt, and vertical bounce (floats on a spring, gets thrown by rising waves at speed, flies and lands) |
+| `src/boat.js` | Boat model and physics: thrust, drag, drift, turning, bank and pitch tilt, and vertical bounce (floats on the surface; a steep wave face hit near top speed launches a jump, then a cooldown before the next) |
 | `src/water.js` | Water rendering in two passes: the scene under the water is drawn to a texture with depth, then the water shader uses that depth for refraction, colour that fades with depth, and foam along shores and hulls. Also seabed caustics and `waveHeight()`, which uses the same maths on the CPU so things float on the visible surface |
 | `src/world.js` | Seeded islands with underwater shelves, coral, seaweed, reef pillars, fish schools that scatter when the boat passes, a shipwreck on a sandbar near the start, buoys, rings, collisions |
 | `src/wake.js` | Foam trail behind the boat |

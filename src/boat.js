@@ -11,7 +11,9 @@ const TURN_RATE = 2.3; // rad / s at speed
 const GRAVITY = 14; // a bit stronger than real for snappy hops
 const BUOY_K = 70; // how stiffly the hull floats back to the surface
 const BUOY_DAMP = 9;
-const LAUNCH = 2.6; // how hard rising water throws the hull at speed
+const LAUNCH = 2.2; // how hard a steep wave face throws the hull at speed
+const LAUNCH_MIN_RISE = 0.9; // only water rising faster than this (units/s) can launch the hull
+const JUMP_COOLDOWN = 4; // seconds after a landing before the next big jump
 
 function buildModel() {
   const model = new THREE.Group();
@@ -80,6 +82,7 @@ export class Boat {
     this.prevRest = null;
     this.airborne = false;
     this.airTime = 0;
+    this.jumpCooldown = 0;
     this.steer = 0;
     this.boosting = false;
     this.events = []; // 'land' / 'hit' events for spray + camera shake, drained by main.js
@@ -145,36 +148,42 @@ export class Boat {
     const surfaceVel = (rest - this.prevRest) / Math.max(dt, 1e-4);
     this.prevRest = rest;
 
-    // --- Vertical physics: float on a spring, get thrown by rising water, fall with gravity ---
-    const wasAirborne = this.airborne;
-    if (this.y > rest + 0.03) {
+    // --- Vertical physics ---
+    // Normally the hull just floats on the surface (a stiff spring). A jump only happens when
+    // you hit a steep, fast-rising wave face at real speed, and then not again until the
+    // cooldown after the last landing has run out.
+    this.jumpCooldown = Math.max(0, this.jumpCooldown - dt);
+    if (!this.airborne && surfaceVel > LAUNCH_MIN_RISE && speedFactor > 0.8 && this.jumpCooldown === 0) {
+      this.vy = THREE.MathUtils.clamp(surfaceVel * LAUNCH * speedFactor, 5.5, 8);
+      this.y = Math.max(this.y, rest) + 0.2;
       this.airborne = true;
+    }
+
+    if (this.airborne) {
       this.vy -= GRAVITY * dt;
+      this.y += this.vy * dt;
       this.airTime += dt;
-    } else {
-      // Buoyancy spring + damping.
-      this.vy += (BUOY_K * (rest - this.y) - BUOY_DAMP * this.vy) * dt;
-      // Hitting rising water fast kicks the hull up — the faster you go, the bigger the hop.
-      if (surfaceVel > 0) {
-        const launch = 1 + LAUNCH * speedFactor * speedFactor;
-        this.vy = Math.max(this.vy, surfaceVel * launch);
-      }
-      if (wasAirborne) {
+      if (this.y <= rest && this.vy < 0) {
+        // Touchdown.
         const impact = -this.vy;
-        if (this.airTime > 0.12 && impact > 1.5) {
+        if (impact > 1.5) {
           this.events.push({ type: 'land', strength: impact });
           this.pitch += Math.min(impact * 0.035, 0.25); // nose slaps down
           this.roll += (Math.random() - 0.5) * impact * 0.04;
-          this.vy *= 0.35; // water soaks up the hit
           vf *= 1 - Math.min(impact * 0.012, 0.12);
           this.vel.set(nf.x * vf + nr.x * vl, nf.y * vf + nr.y * vl);
         }
+        this.vy *= 0.3; // water soaks up the hit; the spring makes the hull settle with a bob
         this.airborne = false;
         this.airTime = 0;
+        this.jumpCooldown = JUMP_COOLDOWN;
       }
+    } else {
+      // Buoyancy spring + damping, following the moving surface.
+      this.vy += (BUOY_K * (rest - this.y) - BUOY_DAMP * (this.vy - surfaceVel)) * dt;
+      this.y += this.vy * dt;
+      if (this.y < rest - 0.8) { this.y = rest - 0.8; this.vy = Math.max(this.vy, 0); }
     }
-    this.y += this.vy * dt;
-    if (this.y < rest - 0.8) { this.y = rest - 0.8; this.vy = Math.max(this.vy, 0); }
 
     // --- Visual tilt ---
     // Bank into the turn, plus a little lean from sideways sliding.
