@@ -259,11 +259,9 @@ const fragmentShader = /* glsl */ `
     vec3 ln = normalize(vec3(n.x * 3.0, n.y, n.z * 3.0));
     col *= clamp(1.0 + 0.45 * (dot(ln, uSunDir) - uSunDir.y), 0.85, 1.12);
 
-    // Where is the sea "unsettled"? Along each rolling swell (and the churned water just
-    // behind it), plus a few slow-drifting patches of chop. Everywhere else stays calm.
+    // Wave strokes only appear on the rolling swells. Everywhere else stays calm and clear.
     float swellZone = smoothstep(0.03, 0.4, vRoller);
-    float chopZone = smoothstep(0.66, 0.82, noise(wp * 0.045 + vec2(uTime * 0.03, -uTime * 0.02)));
-    float rough = max(swellZone, chopZone) * smoothstep(1.5, 4.0, thick); // never in the shallows
+    float rough = swellZone * smoothstep(1.5, 4.0, thick); // only on swells, never in the shallows
 
     // Wave strokes (only where rough): a big set plus a smaller, fainter set.
     vec2 wind = vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)});
