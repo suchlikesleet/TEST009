@@ -112,3 +112,4 @@ html, body {
   color: #222;
 }
 #intro.hidden { display: none; }
+#intro .version { margin-top: 16px; font-size: 12px; opacity: 0.55; }

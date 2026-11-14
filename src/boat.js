@@ -11,8 +11,8 @@ const TURN_RATE = 2.3; // rad / s at speed
 const GRAVITY = 14; // a bit stronger than real for snappy hops
 const BUOY_K = 70; // how stiffly the hull floats back to the surface
 const BUOY_DAMP = 9;
-const LAUNCH = 0.75; // how hard a rolling swell throws the hull (multiplied by how fast it rises under you)
-const LAUNCH_MIN_RISE = 3; // the swell must rise under the hull at least this fast (units/s) -> hit it at speed
+const LAUNCH = 0.6; // how hard a rolling swell throws the hull (multiplied by how fast it rises under you)
+const LAUNCH_MIN_RISE = 4; // the swell must rise under the hull at least this fast (units/s) -> hit it at speed
 const JUMP_COOLDOWN = 1; // short guard so one swell can't launch you twice
 
 function buildModel() {

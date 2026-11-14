@@ -14,10 +14,10 @@ const WAVES = [
 export const ROLLER = {
   dir: [0.8, -0.6], // travel direction
   perp: [0.6, 0.8],
-  k: (Math.PI * 2) / 55, // ~55 units between ridges
+  k: (Math.PI * 2) / 38, // ~38 units between ridges
   speed: 1.5, // phase speed (rad/s) -> ridges move ~13 units/s
-  amp: 0.9,
-  sharp: 10, // higher = narrower ridge
+  amp: 1.15,
+  sharp: 22, // higher = narrower ridge (~6 units wide)
 };
 
 const smooth = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
@@ -30,7 +30,7 @@ export function rollerAt(x, z, t) {
   const ridge = Math.pow(0.5 + 0.5 * Math.sin(along * R.k - t * R.speed), R.sharp);
   // Break each ridge into segments so they read as separate swells, not endless lines.
   const seg = 0.5 + 0.5 * Math.sin(across * 0.06 + Math.sin(along * 0.013) * 3.0);
-  return ridge * smooth(0.25, 0.65, seg);
+  return ridge * smooth(0.12, 0.4, seg);
 }
 
 export function waveHeight(x, z, t) {
@@ -111,14 +111,13 @@ const vertexShader = /* glsl */ `
   varying vec3 vWorld;
   varying vec3 vNormal;
   varying float vHeight;
-  varying float vRoller;
 
   float rollerAt(vec2 p, float t) {
     float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)}));
     float across = dot(p, vec2(${ROLLER.perp[0].toFixed(3)}, ${ROLLER.perp[1].toFixed(3)}));
     float ridge = pow(0.5 + 0.5 * sin(along * ${ROLLER.k.toFixed(5)} - t * ${ROLLER.speed.toFixed(3)}), ${ROLLER.sharp.toFixed(1)});
     float seg = 0.5 + 0.5 * sin(across * 0.06 + sin(along * 0.013) * 3.0);
-    return ridge * smoothstep(0.25, 0.65, seg);
+    return ridge * smoothstep(0.12, 0.4, seg);
   }
 
   float waveH(vec2 p, float t) {
@@ -136,7 +135,6 @@ const vertexShader = /* glsl */ `
     vNormal = normalize(vec3(h - hx, e, h - hz));
     wp.y += h;
     vHeight = h;
-    vRoller = rollerAt(wp.xz, uTime);
     vWorld = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -161,7 +159,14 @@ const fragmentShader = /* glsl */ `
   varying vec3 vWorld;
   varying vec3 vNormal;
   varying float vHeight;
-  varying float vRoller;
+
+  float rollerAt(vec2 p, float t) {
+    float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)}));
+    float across = dot(p, vec2(${ROLLER.perp[0].toFixed(3)}, ${ROLLER.perp[1].toFixed(3)}));
+    float ridge = pow(0.5 + 0.5 * sin(along * ${ROLLER.k.toFixed(5)} - t * ${ROLLER.speed.toFixed(3)}), ${ROLLER.sharp.toFixed(1)});
+    float seg = 0.5 + 0.5 * sin(across * 0.06 + sin(along * 0.013) * 3.0);
+    return ridge * smoothstep(0.12, 0.4, seg);
+  }
 
   float viewZ(float depth) { return perspectiveDepthToViewZ(depth, uNear, uFar); }
 
@@ -180,6 +185,10 @@ const fragmentShader = /* glsl */ `
 
   void main() {
     vec3 n = normalize(vNormal);
+    // Swell evaluated per pixel so the thin crest line stays crisp (not per mesh vertex).
+    float vRoller = rollerAt(vWorld.xz, uTime);
+    vec2 rdir = vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)}) * 0.5;
+    float vRollerSlope = clamp((rollerAt(vWorld.xz + rdir, uTime) - rollerAt(vWorld.xz - rdir, uTime)) / 1.0 / 0.16, -1.0, 1.0);
     vec2 uv = gl_FragCoord.xy / uResolution;
     float wZ = viewZ(gl_FragCoord.z);
 
@@ -202,6 +211,8 @@ const fragmentShader = /* glsl */ `
     // Slope shading (exaggerated) so swells read clearly from above.
     vec3 ln = normalize(vec3(n.x * 4.0, n.y, n.z * 4.0));
     col *= clamp(1.0 + 0.9 * (dot(ln, uSunDir) - uSunDir.y), 0.65, 1.45);
+    // Swells: dark leading face, bright back face, so each ridge reads clearly from above.
+    col *= 1.0 + 0.55 * vRollerSlope;
 
     // Sky reflection + sun glint.
     vec3 v = normalize(uCamPos - vWorld);
@@ -217,9 +228,12 @@ const fragmentShader = /* glsl */ `
     float edge = 1.0 - smoothstep(0.0, 0.75, thick + (n1 - 0.5) * 0.7);
     float lines = smoothstep(0.6, 0.85, sin(thick * 6.0 - uTime * 2.2 + n1 * 2.0) * 0.5 + 0.5)
                 * (1.0 - smoothstep(0.5, 2.2, thick)) * smoothstep(0.35, 0.7, n2);
-    float crest = smoothstep(0.5, 0.7, vHeight + (n1 - 0.5) * 0.3) * smoothstep(0.4, 0.8, n2) * 0.35;
+    float crest = smoothstep(0.5, 0.7, vHeight - vRoller * ${ROLLER.amp.toFixed(3)} + (n1 - 0.5) * 0.3) * smoothstep(0.5, 0.85, n2) * 0.15;
     // Whitecaps along the rolling swells.
-    float cap = smoothstep(0.5, 0.8, vRoller + (n1 - 0.5) * 0.25) * (0.75 + 0.25 * n2);
+    float cap = smoothstep(0.8, 0.96, vRoller + (n1 - 0.5) * 0.12) * (0.85 + 0.15 * n2);
+    // Foam streaks trailing behind each crest.
+    float trail = smoothstep(0.08, 0.4, vRoller) * smoothstep(0.1, 0.6, vRollerSlope) * smoothstep(0.55, 0.85, n2) * 0.4;
+    cap = max(cap, trail);
     float foam = clamp(max(max(max(edge, lines * 0.8), crest), cap), 0.0, 1.0);
     col = mix(col, vec3(0.94, 0.98, 1.0), foam * 0.92);
 
