@@ -212,7 +212,7 @@ const fragmentShader = /* glsl */ `
     float f = A * 4.0 * (us - 0.5) * (us - 0.5) - A * 0.5;            // +A/2 at the cusps
     float df = A * 8.0 * (us - 0.5) * 1.35 * pow(max(u, 1e-3), 0.35);
     float d = abs(fy - f) / sqrt(1.0 + df * df);       // ~distance to the curve
-    float w = 0.055 * taper;
+    float w = 0.042 * taper;
     float aa = max(fwidth(d), 1e-4);
     body = keep * taper * step(fy, f) * (1.0 - smoothstep(0.0, 0.32, f - fy));
     return keep * (1.0 - smoothstep(w - aa, w + aa, d));
@@ -267,8 +267,8 @@ const fragmentShader = /* glsl */ `
     // Wave strokes (only where rough): a big set plus a smaller, fainter set.
     vec2 wind = vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)});
     float bodyA, bodyB;
-    float strokeA = waveStroke(wp, wind, uTime, 5.5, 1.0, bodyA);
-    float strokeB = waveStroke(wp + 31.0, normalize(wind + vec2(0.18, 0.0)), uTime * 1.2, 3.0, 4.0, bodyB);
+    float strokeA = waveStroke(wp, wind, uTime, 3.3, 1.0, bodyA);
+    float strokeB = waveStroke(wp + 31.0, normalize(wind + vec2(0.18, 0.0)), uTime * 1.2, 2.0, 4.0, bodyB);
     float face = max(bodyA, bodyB * 0.6);
     col = mix(col, col * (1.0 + 0.28 * face), rough);  // lighter wave body under each stroke
 
