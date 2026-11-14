@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waveHeight } from './water.js';
+import { waveHeight, rollerAt, ROLLER } from './water.js';
 
 const MAX_SPEED = 22; // units / s (cruise)
 const BOOST_MULT = 1.6;
@@ -11,9 +11,9 @@ const TURN_RATE = 2.3; // rad / s at speed
 const GRAVITY = 14; // a bit stronger than real for snappy hops
 const BUOY_K = 70; // how stiffly the hull floats back to the surface
 const BUOY_DAMP = 9;
-const LAUNCH = 2.2; // how hard a steep wave face throws the hull at speed
-const LAUNCH_MIN_RISE = 0.9; // only water rising faster than this (units/s) can launch the hull
-const JUMP_COOLDOWN = 4; // seconds after a landing before the next big jump
+const LAUNCH = 0.75; // how hard a rolling swell throws the hull (multiplied by how fast it rises under you)
+const LAUNCH_MIN_RISE = 3; // the swell must rise under the hull at least this fast (units/s) -> hit it at speed
+const JUMP_COOLDOWN = 1; // short guard so one swell can't launch you twice
 
 function buildModel() {
   const model = new THREE.Group();
@@ -80,6 +80,7 @@ export class Boat {
     this.y = 0;
     this.vy = 0;
     this.prevRest = null;
+    this.prevSwell = 0;
     this.airborne = false;
     this.airTime = 0;
     this.jumpCooldown = 0;
@@ -147,14 +148,17 @@ export class Boat {
     if (this.prevRest === null) { this.prevRest = rest; this.y = rest; }
     const surfaceVel = (rest - this.prevRest) / Math.max(dt, 1e-4);
     this.prevRest = rest;
+    // How fast the rolling swell (the visible whitecapped ridges) is rising under the hull.
+    const swell = ROLLER.amp * (rollerAt(bx + nf.x * L, bz + nf.y * L, t) + rollerAt(bx, bz, t)) / 2;
+    const swellRise = (swell - this.prevSwell) / Math.max(dt, 1e-4);
+    this.prevSwell = swell;
 
     // --- Vertical physics ---
     // Normally the hull just floats on the surface (a stiff spring). A jump only happens when
-    // you hit a steep, fast-rising wave face at real speed, and then not again until the
-    // cooldown after the last landing has run out.
+    // you hit one of the visible rolling swells head-on at speed.
     this.jumpCooldown = Math.max(0, this.jumpCooldown - dt);
-    if (!this.airborne && surfaceVel > LAUNCH_MIN_RISE && speedFactor > 0.8 && this.jumpCooldown === 0) {
-      this.vy = THREE.MathUtils.clamp(surfaceVel * LAUNCH * speedFactor, 5.5, 8);
+    if (!this.airborne && swellRise > LAUNCH_MIN_RISE && speedFactor > 0.55 && this.jumpCooldown === 0) {
+      this.vy = THREE.MathUtils.clamp(swellRise * LAUNCH, 4.5, 8.5);
       this.y = Math.max(this.y, rest) + 0.2;
       this.airborne = true;
     }

@@ -9,12 +9,36 @@ const WAVES = [
   [-0.8, 0.5, 0.63, 2.6, 0.05],
 ];
 
+// Rolling swells: occasional tall ridges with whitecaps that sweep across the sea.
+// They are the only waves that can launch the boat, so you can see a jump coming.
+export const ROLLER = {
+  dir: [0.8, -0.6], // travel direction
+  perp: [0.6, 0.8],
+  k: (Math.PI * 2) / 55, // ~55 units between ridges
+  speed: 1.5, // phase speed (rad/s) -> ridges move ~13 units/s
+  amp: 0.9,
+  sharp: 10, // higher = narrower ridge
+};
+
+const smooth = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+
+/** 0..1 strength of the rolling swell at a point (1 = on a crest). */
+export function rollerAt(x, z, t) {
+  const R = ROLLER;
+  const along = x * R.dir[0] + z * R.dir[1];
+  const across = x * R.perp[0] + z * R.perp[1];
+  const ridge = Math.pow(0.5 + 0.5 * Math.sin(along * R.k - t * R.speed), R.sharp);
+  // Break each ridge into segments so they read as separate swells, not endless lines.
+  const seg = 0.5 + 0.5 * Math.sin(across * 0.06 + Math.sin(along * 0.013) * 3.0);
+  return ridge * smooth(0.25, 0.65, seg);
+}
+
 export function waveHeight(x, z, t) {
   let h = 0;
   for (const [dx, dz, f, s, a] of WAVES) {
     h += Math.sin((x * dx + z * dz) * f + t * s) * a;
   }
-  return h;
+  return h + rollerAt(x, z, t) * ROLLER.amp;
 }
 
 /** Shared clock for every shader that animates with the water (caustics). */
@@ -87,11 +111,20 @@ const vertexShader = /* glsl */ `
   varying vec3 vWorld;
   varying vec3 vNormal;
   varying float vHeight;
+  varying float vRoller;
+
+  float rollerAt(vec2 p, float t) {
+    float along = dot(p, vec2(${ROLLER.dir[0].toFixed(3)}, ${ROLLER.dir[1].toFixed(3)}));
+    float across = dot(p, vec2(${ROLLER.perp[0].toFixed(3)}, ${ROLLER.perp[1].toFixed(3)}));
+    float ridge = pow(0.5 + 0.5 * sin(along * ${ROLLER.k.toFixed(5)} - t * ${ROLLER.speed.toFixed(3)}), ${ROLLER.sharp.toFixed(1)});
+    float seg = 0.5 + 0.5 * sin(across * 0.06 + sin(along * 0.013) * 3.0);
+    return ridge * smoothstep(0.25, 0.65, seg);
+  }
 
   float waveH(vec2 p, float t) {
     float h = 0.0;
     ${glslWaves}
-    return h;
+    return h + rollerAt(p, t) * ${ROLLER.amp.toFixed(3)};
   }
 
   void main() {
@@ -103,6 +136,7 @@ const vertexShader = /* glsl */ `
     vNormal = normalize(vec3(h - hx, e, h - hz));
     wp.y += h;
     vHeight = h;
+    vRoller = rollerAt(wp.xz, uTime);
     vWorld = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -127,6 +161,7 @@ const fragmentShader = /* glsl */ `
   varying vec3 vWorld;
   varying vec3 vNormal;
   varying float vHeight;
+  varying float vRoller;
 
   float viewZ(float depth) { return perspectiveDepthToViewZ(depth, uNear, uFar); }
 
@@ -164,6 +199,10 @@ const fragmentShader = /* glsl */ `
     vec3 waterTint = mix(uShallow, uDeep, clamp(thick * 0.14, 0.0, 1.0));
     vec3 col = below * transmit + waterTint * scatter;
 
+    // Slope shading (exaggerated) so swells read clearly from above.
+    vec3 ln = normalize(vec3(n.x * 4.0, n.y, n.z * 4.0));
+    col *= clamp(1.0 + 0.9 * (dot(ln, uSunDir) - uSunDir.y), 0.65, 1.45);
+
     // Sky reflection + sun glint.
     vec3 v = normalize(uCamPos - vWorld);
     float fres = pow(1.0 - max(dot(n, v), 0.0), 4.0);
@@ -179,7 +218,9 @@ const fragmentShader = /* glsl */ `
     float lines = smoothstep(0.6, 0.85, sin(thick * 6.0 - uTime * 2.2 + n1 * 2.0) * 0.5 + 0.5)
                 * (1.0 - smoothstep(0.5, 2.2, thick)) * smoothstep(0.35, 0.7, n2);
     float crest = smoothstep(0.5, 0.7, vHeight + (n1 - 0.5) * 0.3) * smoothstep(0.4, 0.8, n2) * 0.35;
-    float foam = clamp(max(max(edge, lines * 0.8), crest), 0.0, 1.0);
+    // Whitecaps along the rolling swells.
+    float cap = smoothstep(0.5, 0.8, vRoller + (n1 - 0.5) * 0.25) * (0.75 + 0.25 * n2);
+    float foam = clamp(max(max(max(edge, lines * 0.8), crest), cap), 0.0, 1.0);
     col = mix(col, vec3(0.94, 0.98, 1.0), foam * 0.92);
 
     gl_FragColor = vec4(col, 1.0);

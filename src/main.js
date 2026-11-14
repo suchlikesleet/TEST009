@@ -71,9 +71,11 @@ function updateCamera(dt) {
   const portrait = camera.aspect < 1;
   const speedK = Math.min(boat.speed / 30, 1);
   const height = (portrait ? 42 : 30) + speedK * 12;
-  const lead = 0.7; // look ahead in the direction of travel
-  const tx = boat.pos.x + boat.vel.x * lead;
-  const tz = boat.pos.y + boat.vel.y * lead;
+  // Look ahead in the direction of travel, but never so far the boat leaves the screen.
+  const halfH = height * 1.1 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const halfW = halfH * camera.aspect;
+  const tx = boat.pos.x + THREE.MathUtils.clamp(boat.vel.x * 0.7, -halfW * 0.5, halfW * 0.5);
+  const tz = boat.pos.y + THREE.MathUtils.clamp(boat.vel.y * 0.7, -halfH * 0.5, halfH * 0.5);
   const k = 1 - Math.exp(-3 * dt);
   lookAt.x += (tx - lookAt.x) * k;
   lookAt.z += (tz - lookAt.z) * k;
