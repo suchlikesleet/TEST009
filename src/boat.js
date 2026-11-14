@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { waveHeight, rollerAt, ROLLER } from './water.js';
+import { toon, addOutline } from './style.js';
 
 const MAX_SPEED = 22; // units / s (cruise)
 const BOOST_MULT = 1.6;
@@ -17,10 +18,10 @@ const JUMP_COOLDOWN = 1; // short guard so one swell can't launch you twice
 
 function buildModel() {
   const model = new THREE.Group();
-  const white = new THREE.MeshStandardMaterial({ color: '#f4f4f4', flatShading: true, roughness: 0.5 });
-  const red = new THREE.MeshStandardMaterial({ color: '#e8462f', flatShading: true, roughness: 0.5 });
-  const dark = new THREE.MeshStandardMaterial({ color: '#1f2a33', flatShading: true, roughness: 0.3 });
-  const glass = new THREE.MeshStandardMaterial({ color: '#7fd4ff', flatShading: true, roughness: 0.1, metalness: 0.2 });
+  const white = toon('#ffffff');
+  const red = toon('#ff4a36');
+  const dark = toon('#26323d');
+  const glass = toon('#8fe3ff');
 
   // Hull: a pointed shape extruded downward.
   const shape = new THREE.Shape();
@@ -33,7 +34,7 @@ function buildModel() {
   const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.7, bevelEnabled: true, bevelSize: 0.15, bevelThickness: 0.15, bevelSegments: 1, curveSegments: 6 });
   hullGeo.rotateX(Math.PI / 2); // shape Y -> local +Z (bow), extrusion -> downward
   hullGeo.translate(0, 0.55, 0);
-  const hull = new THREE.Mesh(hullGeo, white);
+  const hull = addOutline(new THREE.Mesh(hullGeo, white), 0.07);
   model.add(hull);
 
   // Red stripe along the deck edge.
@@ -57,7 +58,7 @@ function buildModel() {
   engine.position.set(0, 0.6, -2.35);
   model.add(engine);
 
-  model.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  model.traverse((o) => { if (o.isMesh && !o.userData.isOutline) o.castShadow = true; });
   return model;
 }
 

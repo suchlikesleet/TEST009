@@ -33,6 +33,7 @@ python3 -m http.server 8000   # then open http://localhost:8000
 | `src/boat.js` | Boat model and physics: thrust, drag, drift, turning, bank and pitch tilt, and vertical bounce (floats on the surface; hitting one of the whitecapped rolling swells at speed launches a jump) |
 | `src/water.js` | Water rendering in two passes: the scene under the water is drawn to a texture with depth, then the water shader uses that depth for refraction, colour that fades with depth, and foam along shores and hulls. Also the rolling swells (`ROLLER`: tall whitecapped ridges, the only waves that launch the boat), slope shading so waves read from above, seabed caustics, and `waveHeight()`, which uses the same maths on the CPU so things float on the visible surface |
 | `src/world.js` | Seeded islands with underwater shelves, coral, seaweed, reef pillars, fish schools that scatter when the boat passes, a shipwreck on a sandbar near the start, buoys, rings, collisions |
+| `src/style.js` | Cartoon look: cel-shaded (toon) materials and dark outlines around objects |
 | `src/wake.js` | Foam trail behind the boat |
 | `src/spray.js` | Water droplets: bow spray (stronger on the outside of turns), rooster tail when boosting, splashes on landing and on hits |
 | `src/controls.js` | Floating touch joystick, boost button, keyboard |

@@ -23,8 +23,8 @@ const fragmentShader = /* glsl */ `
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c);
     if (d > 0.5) discard;
-    float soft = smoothstep(0.5, 0.15, d);
-    gl_FragColor = vec4(vec3(0.93, 0.97, 1.0), vAlpha * soft);
+    float edge = 1.0 - smoothstep(0.42, 0.5, d); // crisp round droplet
+    gl_FragColor = vec4(vec3(0.97, 0.99, 1.0), vAlpha * edge);
     #include <colorspace_fragment>
   }
 `;
@@ -106,8 +106,9 @@ export class Spray {
         continue;
       }
       const k = this.age[i] / this.life[i];
-      this.alpha[i] = (1 - k) * 0.85;
-      this.size[i] = this.baseSize[i] * (1 + k * 1.5);
+      // Cartoon droplets: solid, shrinking away at the end of their life.
+      this.alpha[i] = 0.95;
+      this.size[i] = this.baseSize[i] * (k < 0.5 ? 1 + k : 1.5 * (1 - (k - 0.5) / 0.5));
     }
     const g = this.points.geometry;
     g.attributes.position.needsUpdate = true;

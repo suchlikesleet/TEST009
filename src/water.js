@@ -91,7 +91,8 @@ export function withCaustics(material, strength = 0.55) {
         '#include <dithering_fragment>',
         `#include <dithering_fragment>
         float cDepth = smoothstep(0.05, -0.7, vCWorld.y) * exp(vCWorld.y * 0.13);
-        gl_FragColor.rgb += vec3(0.75, 0.95, 1.0) * caustic(vCWorld.xz, uWaterTime) * cDepth * ${strength.toFixed(2)};`
+        float cLine = smoothstep(0.28, 0.4, caustic(vCWorld.xz, uWaterTime));
+        gl_FragColor.rgb += vec3(0.8, 1.0, 1.0) * cLine * cDepth * ${strength.toFixed(2)};`
       );
   };
   material.customProgramCacheKey = () => `caustics-${strength}`;
@@ -147,6 +148,9 @@ const fragmentShader = /* glsl */ `
   uniform float uTime;
   uniform vec3 uDeep;
   uniform vec3 uShallow;
+  uniform vec3 uBand0;
+  uniform vec3 uBand1;
+  uniform vec3 uBand2;
   uniform vec3 uSky;
   uniform vec3 uSunDir;
   uniform vec3 uCamPos;
@@ -169,6 +173,12 @@ const fragmentShader = /* glsl */ `
   }
 
   float viewZ(float depth) { return perspectiveDepthToViewZ(depth, uNear, uFar); }
+
+  // Anti-aliased hard step: crisp cartoon edges without jaggies.
+  float aastep(float threshold, float x) {
+    float w = max(fwidth(x) * 0.75, 1e-4);
+    return smoothstep(threshold - w, threshold + w, x);
+  }
 
   // Sine-free hash (stable at large world coordinates).
   float hash(vec2 p) {
@@ -202,40 +212,45 @@ const fragmentShader = /* glsl */ `
     float thick = max(wZ - sZ, 0.0);
     vec3 below = texture2D(uSceneColor, ruv).rgb;
 
-    // Light absorption: red fades first, then green -> shallow turquoise, deep blue.
-    vec3 transmit = exp(-vec3(0.55, 0.21, 0.15) * thick);
-    float scatter = 1.0 - exp(-thick * 0.4);
-    vec3 waterTint = mix(uShallow, uDeep, clamp(thick * 0.14, 0.0, 1.0));
-    vec3 col = below * transmit + waterTint * scatter;
+    // ---------- Stylized look: flat colour bands, stepped shading, crisp foam ----------
+    // Depth bands with clean (anti-aliased) edges instead of smooth gradients.
+    float b1 = aastep(1.3, thick);
+    float b2 = aastep(3.2, thick);
+    float b3 = aastep(5.6, thick);
+    vec3 tint = mix(mix(mix(uBand0, uBand1, b1), uBand2, b2), uDeep, b3);
+    // Shallow bands let the seabed and objects show through, tinted; deep water hides them.
+    float see = mix(mix(mix(0.6, 0.38, b1), 0.16, b2), 0.0, b3);
+    vec3 col = mix(tint, below * tint * 1.9, see);
 
-    // Slope shading (exaggerated) so swells read clearly from above.
+    // Two-step wave shading so the ordinary swell reads as soft bands.
     vec3 ln = normalize(vec3(n.x * 4.0, n.y, n.z * 4.0));
-    col *= clamp(1.0 + 0.9 * (dot(ln, uSunDir) - uSunDir.y), 0.65, 1.45);
-    // Swells: dark leading face, bright back face, so each ridge reads clearly from above.
-    col *= 1.0 + 0.55 * vRollerSlope;
+    float lit = dot(ln, uSunDir) - uSunDir.y;
+    col *= mix(0.9, 1.0, aastep(-0.12, lit)) * mix(1.0, 1.08, aastep(0.16, lit));
+    // Rolling swells: a solid shadow band on the leading face, a light band behind.
+    col *= mix(0.68, 1.0, aastep(-0.3, vRollerSlope)) * mix(1.0, 1.14, aastep(0.3, vRollerSlope));
 
-    // Sky reflection + sun glint.
-    vec3 v = normalize(uCamPos - vWorld);
-    float fres = pow(1.0 - max(dot(n, v), 0.0), 4.0);
-    col = mix(col, uSky, clamp(fres * 0.7 + 0.03, 0.0, 1.0));
-    vec3 hv = normalize(uSunDir + v);
-    col += vec3(1.0, 0.97, 0.9) * pow(max(dot(n, hv), 0.0), 140.0) * 0.9;
-
-    // Foam: where water is thin (shores, around buoys and hulls), plus rolling lines toward the beach.
     vec2 fp = vWorld.xz;
     float n1 = noise(fp * 0.8 + vec2(uTime * 0.35, uTime * 0.22));
     float n2 = noise(fp * 1.1 - vec2(uTime * 0.4, -uTime * 0.25));
-    float edge = 1.0 - smoothstep(0.0, 0.75, thick + (n1 - 0.5) * 0.7);
-    float lines = smoothstep(0.6, 0.85, sin(thick * 6.0 - uTime * 2.2 + n1 * 2.0) * 0.5 + 0.5)
-                * (1.0 - smoothstep(0.5, 2.2, thick)) * smoothstep(0.35, 0.7, n2);
-    float crest = smoothstep(0.5, 0.7, vHeight - vRoller * ${ROLLER.amp.toFixed(3)} + (n1 - 0.5) * 0.3) * smoothstep(0.5, 0.85, n2) * 0.15;
-    // Whitecaps along the rolling swells.
-    float cap = smoothstep(0.8, 0.96, vRoller + (n1 - 0.5) * 0.12) * (0.85 + 0.15 * n2);
-    // Foam streaks trailing behind each crest.
-    float trail = smoothstep(0.08, 0.4, vRoller) * smoothstep(0.1, 0.6, vRollerSlope) * smoothstep(0.55, 0.85, n2) * 0.4;
-    cap = max(cap, trail);
-    float foam = clamp(max(max(max(edge, lines * 0.8), crest), cap), 0.0, 1.0);
-    col = mix(col, vec3(0.94, 0.98, 1.0), foam * 0.92);
+    float n3 = noise(fp * 2.2 + vec2(-uTime * 0.3, uTime * 0.45));
+
+    // Sparkles: little white glints that twinkle on sunlit wave faces.
+    float sparkle = aastep(0.97, n3 * (0.6 + 0.5 * n1)) * aastep(0.06, lit);
+    col = mix(col, vec3(1.0), sparkle * 0.85);
+
+    // Foam (all hard-edged):
+    // 1. solid foam where water is thin — shores, buoys, the hull
+    float edge = 1.0 - aastep(0.5 + (n1 - 0.5) * 0.4, thick);
+    // 2. a second foam ring a little further out that breathes in and out
+    float ringPos = 1.1 + 0.25 * sin(uTime * 1.4 + n1 * 2.5);
+    float ring = (1.0 - aastep(0.1 + (n2 - 0.5) * 0.06, abs(thick - ringPos))) * (1.0 - b2);
+    // 3. a crisp whitecap line along every rolling swell, with foam bits trailing behind
+    float cap = aastep(0.84 + (n1 - 0.5) * 0.1, vRoller);
+    float trail = aastep(0.74, n3) * aastep(0.12, vRoller) * aastep(0.25, vRollerSlope);
+    // 4. a few small caps on ordinary wave crests
+    float crest = aastep(0.88, n2) * aastep(0.5, vHeight - vRoller * ${ROLLER.amp.toFixed(3)});
+    float foam = max(max(edge, ring), max(max(cap, trail * 0.9), crest * 0.8));
+    col = mix(col, vec3(0.97, 0.99, 1.0), foam);
 
     gl_FragColor = vec4(col, 1.0);
     #include <colorspace_fragment>
@@ -250,7 +265,10 @@ export class Water {
     this.target = this.#makeTarget(1, 1);
     this.uniforms = {
       uTime: waterTime,
-      uDeep: { value: new THREE.Color('#08457a') },
+      uBand0: { value: new THREE.Color('#8af2e2') }, // very shallow
+      uBand1: { value: new THREE.Color('#33cfd0') }, // shallow
+      uBand2: { value: new THREE.Color('#1f9bc9') }, // mid
+      uDeep: { value: new THREE.Color('#1a6db3') }, // deep
       uShallow: { value: new THREE.Color('#2bbbc9') },
       uSky: { value: new THREE.Color('#bfe6f5') },
       uSunDir: { value: new THREE.Vector3(0.4, 1, 0.3).normalize() },

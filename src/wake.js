@@ -38,7 +38,7 @@ export class Wake {
       const f = boat.forward, r = boat.right;
       const sx = boat.pos.x - f.x * 2.4, sz = boat.pos.y - f.y * 2.4;
       const spread = speed * 0.12;
-      const s = 0.3 + speed * 0.018;
+      const s = 0.22 + speed * 0.012;
       // Two puffs pushed outward to form the V-shaped wake, one in the middle.
       this.#spawn(sx + r.x * 0.6, sz + r.y * 0.6, r.x * spread, r.y * spread, s);
       this.#spawn(sx - r.x * 0.6, sz - r.y * 0.6, -r.x * spread, -r.y * spread, s);
@@ -55,7 +55,9 @@ export class Wake {
       const sc = p.size * (1 + k * 2.2);
       p.m.scale.setScalar(sc);
       p.m.position.set(p.x, waveHeight(p.x, p.z, t) + 0.08, p.z);
-      p.m.material.opacity = Math.pow(1 - k, 1.5) * 0.32;
+      // Cartoon foam: solid blobs that hold, then shrink away instead of fading.
+      p.m.material.opacity = 0.85;
+      p.m.scale.setScalar(sc * (k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4));
     }
   }
 }

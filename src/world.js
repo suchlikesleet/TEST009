@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { waveHeight, withCaustics } from './water.js';
+import { toon, addOutline } from './style.js';
 
 // Small seeded RNG so the map is the same every time.
 function mulberry32(seed) {
@@ -15,7 +16,7 @@ const WORLD = 420; // islands spread over [-WORLD, WORLD]
 const SEABED_Y = -7;
 const SHELF_TOP_Y = -0.8; // where the beach meets the underwater slope
 
-const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, ...extra });
+const std = (color, extra = {}) => toon(color, extra);
 
 export class World {
   constructor(scene) {
@@ -28,16 +29,16 @@ export class World {
     this.rand = mulberry32(1337);
 
     this.mats = {
-      sand: withCaustics(std('#e9d39a')),
+      sand: withCaustics(std('#f6dfa4')),
       wetSand: withCaustics(std('#d4b983')),
       seabed: withCaustics(std('#d4b983'), 0.7),
-      grass: std('#4caf50'),
-      rock: withCaustics(std('#8a8f94')),
+      grass: std('#62d05a'),
+      rock: withCaustics(std('#a3acb5')),
       reef: withCaustics(std('#6f7a73')),
       trunk: std('#8b5a2b'),
-      leaf: std('#2e8b3e'),
+      leaf: std('#36b04f'),
       wood: withCaustics(std('#6b4a2e')),
-      gold: new THREE.MeshStandardMaterial({ color: '#ffc531', emissive: '#a86b00', emissiveIntensity: 0.5, metalness: 0.4, roughness: 0.3 }),
+      gold: toon('#ffcc33', { emissive: '#8a5a00', emissiveIntensity: 0.45 }),
       buoyRed: std('#e53935'),
       buoyWhite: std('#ffffff'),
       coral: ['#ff6f61', '#ff9f43', '#c56cf0', '#f368e0', '#ffd32a'].map((c) => withCaustics(std(c))),
@@ -67,7 +68,7 @@ export class World {
   }
 
   #add(obj) {
-    obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    obj.traverse((o) => { if (o.isMesh && !o.userData.isOutline) { o.castShadow = true; o.receiveShadow = true; } });
     this.scene.add(obj);
     return obj;
   }
@@ -136,6 +137,7 @@ export class World {
       // Beach (above and just below the waterline).
       const beach = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.92, r * 1.15, 1.6, 12), this.mats.sand);
       beach.rotation.y = spin;
+      addOutline(beach, 0.16);
       g.add(beach);
       // Underwater slope down to the seabed — this is what makes the shallow turquoise ring.
       const shelf = new THREE.Mesh(
@@ -153,6 +155,7 @@ export class World {
       );
       hill.position.y = 0.8 + r * (rocky ? 0.45 : 0.25);
       hill.rotation.y = this.rand() * Math.PI;
+      addOutline(hill, 0.12);
       g.add(hill);
 
       if (!rocky) {
@@ -245,7 +248,7 @@ export class World {
   #school(cx, cz, y, radius, count) {
     const geo = new THREE.ConeGeometry(0.16, 0.6, 4).rotateX(Math.PI / 2); // points +Z
     const colors = ['#ff9f1c', '#ffd23f', '#3bceac', '#ee4266'];
-    const mat = new THREE.MeshStandardMaterial({ color: colors[Math.floor(this.rand() * colors.length)], flatShading: true });
+    const mat = toon(colors[Math.floor(this.rand() * colors.length)]);
     const mesh = new THREE.InstancedMesh(geo, mat, count);
     mesh.frustumCulled = false;
     this.scene.add(mesh);
@@ -261,6 +264,7 @@ export class World {
     const h = 2.5 + this.rand() * 1.5;
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.25, h, 5), this.mats.trunk);
     trunk.position.y = h / 2;
+    addOutline(trunk, 0.06);
     p.add(trunk);
     for (let i = 0; i < 5; i++) {
       const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.35, 2.2, 4), this.mats.leaf);
@@ -284,6 +288,7 @@ export class World {
       const b = new THREE.Mesh(body, i % 2 ? this.mats.buoyRed : this.mats.buoyWhite);
       const c = new THREE.Mesh(cap, i % 2 ? this.mats.buoyWhite : this.mats.buoyRed);
       c.position.y = 0.9;
+      addOutline(b, 0.07); addOutline(c, 0.07);
       const ch = new THREE.Mesh(chain, this.mats.reef); // anchor chain, visible under water
       ch.position.y = -3.4;
       g.add(b, c, ch);
@@ -296,7 +301,7 @@ export class World {
   #makeRings(n) {
     const geo = new THREE.TorusGeometry(1.3, 0.28, 8, 20);
     for (let i = 0; i < n; i++) {
-      const mesh = new THREE.Mesh(geo, this.mats.gold);
+      const mesh = addOutline(new THREE.Mesh(geo, this.mats.gold), 0.07);
       mesh.castShadow = true;
       this.scene.add(mesh);
       const ring = { mesh, x: 0, z: 0 };
